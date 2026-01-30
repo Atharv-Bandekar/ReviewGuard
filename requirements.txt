@@ -22,5 +22,4 @@ nltk
 #Managing environemnt variables
 python-dotenv
 
-optimum[onnxruntime] 
-tf2onnx 
+

@@ -5,3 +5,4 @@ __pycache__/
 *.h5
 node_modules/
 .env
+.data

@@ -112,10 +112,10 @@ def predict_comment():
         bot_score = float(probs[1]) 
 
         if bot_score > 0.70:
-            label = "AI Generated"
+            label = "AI"
             confidence = bot_score
         else:
-            label = "HUMAN Generated"
+            label = "HUMAN"
             confidence = human_score
 
         print(f"[SOCIAL] {label} ({confidence:.2f})")

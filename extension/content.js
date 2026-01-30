@@ -75,15 +75,38 @@
     span.className = 'rg-badge';
     span.style.cssText = 'display:inline-block; padding:2px 6px; margin:0 5px; border-radius:4px; font-weight:700; font-size:11px; color:white; vertical-align:middle; font-family:sans-serif; z-index:9999;';
     
-    if (label === 'FAKE' || label === 'BOT') {
+    const pct = (confidence * 100).toFixed(0);
+
+    // --- 1. AMAZON LABELS (Genuine / Fake) ---
+    if (label === 'GENUINE') {
+        span.style.backgroundColor = '#2e7d32'; // Green
+        span.textContent = `✅ GENUINE ${pct}%`;
+    } 
+    else if (label === 'FAKE') {
+        // If it's a Verified Purchase but detected as Fake, use Orange (Warning)
+        // Otherwise use Red (Danger)
         span.style.backgroundColor = isVerified ? '#ff9800' : '#d32f2f'; 
-        span.textContent = label === 'BOT' ? `🤖 BOT ${(confidence*100).toFixed(0)}%` : `🚫 FAKE ${(confidence*100).toFixed(0)}%`;
-    } else {
-        span.style.backgroundColor = '#2e7d32'; 
-        span.textContent = `✅ HUMAN ${(confidence*100).toFixed(0)}%`;
+        span.textContent = `🚫 FAKE ${pct}%`;
     }
+
+    // --- 2. SOCIAL LABELS (Human / AI) ---
+    else if (label === 'HUMAN') {
+        span.style.backgroundColor = '#2e7d32'; // Green
+        span.textContent = `✅ HUMAN ${pct}%`;
+    } 
+    else if (label === 'BOT') {
+        span.style.backgroundColor = '#d32f2f'; // Red
+        span.textContent = `🤖 AI ${pct}%`; // Display as "AI" per your request
+    }
+
+    // --- 3. FALLBACK / UNCERTAIN ---
+    else {
+        span.style.backgroundColor = '#9e9e9e'; // Grey
+        span.textContent = `⚖️ UNCERTAIN ${pct}%`;
+    }
+
     return span;
-  }
+}
 
   // --- 4. INJECTION LOGIC ---
   function attachBadge(node, label, confidence, isVerified, text) {
