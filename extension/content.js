@@ -1,9 +1,10 @@
-// content.js - Final Hybrid Version (Deep Amazon Analysis + Fast Social Scanning)
+// content.js - Optimized Batch Processing Version
 
 (() => {
   const API_BASE = "http://127.0.0.1:8000";
-  const PREDICT_REVIEW_URL = `${API_BASE}/predict`;         
-  const PREDICT_COMMENT_URL = `${API_BASE}/predict_comment`; 
+  // We now use Batch Endpoints
+  const PREDICT_BATCH_URL = `${API_BASE}/predict_batch`; 
+  const PREDICT_COMMENT_BATCH_URL = `${API_BASE}/predict_comment_batch`; 
   const EXPLAIN_URL = `${API_BASE}/explain`;
 
   // --- 1. SITE DETECTION ---
@@ -48,7 +49,7 @@
     }
   }
 
-  // --- 3. UI HELPERS ---
+  // --- 3. UI HELPERS (Same as before) ---
   async function fetchExplanation(text, label, confidence, container) {
     try {
         container.innerHTML = '<span class="loading-spinner">↻</span> <i>Asking AI...</i>';
@@ -77,43 +78,28 @@
     
     const pct = (confidence * 100).toFixed(0);
 
-    // --- 1. AMAZON LABELS (Genuine / Fake) ---
     if (label === 'GENUINE') {
-        span.style.backgroundColor = '#2e7d32'; // Green
+        span.style.backgroundColor = '#2e7d32'; 
         span.textContent = `✅ GENUINE ${pct}%`;
-    } 
-    else if (label === 'FAKE') {
-        // If it's a Verified Purchase but detected as Fake, use Orange (Warning)
-        // Otherwise use Red (Danger)
+    } else if (label === 'FAKE') {
         span.style.backgroundColor = isVerified ? '#ff9800' : '#d32f2f'; 
         span.textContent = `🚫 FAKE ${pct}%`;
-    }
-
-    // --- 2. SOCIAL LABELS (Human / AI) ---
-    else if (label === 'HUMAN') {
-        span.style.backgroundColor = '#2e7d32'; // Green
+    } else if (label === 'HUMAN') {
+        span.style.backgroundColor = '#2e7d32'; 
         span.textContent = `✅ HUMAN ${pct}%`;
-    } 
-    else if (label === 'BOT') {
-        span.style.backgroundColor = '#d32f2f'; // Red
-        span.textContent = `🤖 AI ${pct}%`; // Display as "AI" per your request
-    }
-
-    // --- 3. FALLBACK / UNCERTAIN ---
-    else {
-        span.style.backgroundColor = '#9e9e9e'; // Grey
+    } else if (label === 'AI' || label === 'BOT') {
+        span.style.backgroundColor = '#d32f2f'; 
+        span.textContent = `🤖 AI ${pct}%`;
+    } else {
+        span.style.backgroundColor = '#9e9e9e'; 
         span.textContent = `⚖️ UNCERTAIN ${pct}%`;
     }
-
     return span;
-}
+  }
 
-  // --- 4. INJECTION LOGIC ---
   function attachBadge(node, label, confidence, isVerified, text) {
     if (node.getAttribute('data-rg-status') === 'done') return;
-    
-    // Safety check for existing badges
-    if (node.querySelector('.rg-badge') || (node.parentElement && node.parentElement.querySelector('.rg-badge'))) {
+    if (node.querySelector('.rg-badge')) {
         node.setAttribute('data-rg-status', 'done');
         return;
     }
@@ -125,7 +111,6 @@
     const badge = createBadge(label, confidence, isVerified);
     wrapper.appendChild(badge);
 
-    // 💡 AMAZON EXCLUSIVE: Add "Why?" Button
     if (SITE_TYPE === 'AMAZON' && label !== 'ERR') {
         const btn = document.createElement('button');
         btn.textContent = '💡 Why?';
@@ -142,7 +127,6 @@
         };
         wrapper.appendChild(btn);
         
-        // Insert Wrapper + ExplainBox for Amazon
         const header = node.querySelector('.a-profile') || node.querySelector('.review-header');
         if (header) {
              header.parentElement.insertBefore(wrapper, header.nextSibling);
@@ -151,20 +135,14 @@
              node.prepend(wrapper);
              wrapper.insertAdjacentElement('afterend', explainBox);
         }
-    } 
-    // 🚀 SOCIAL MEDIA: Badge Only (Fast)
-    else {
-        if (SITE_TYPE === 'YOUTUBE') {
-            node.parentElement.insertBefore(wrapper, node);
-        } else if (SITE_TYPE === 'TWITTER') {
-            node.parentElement.appendChild(wrapper);
-        }
+    } else {
+        if (SITE_TYPE === 'YOUTUBE') node.parentElement.insertBefore(wrapper, node);
+        else if (SITE_TYPE === 'TWITTER') node.parentElement.appendChild(wrapper);
     }
-
     node.setAttribute('data-rg-status', 'done');
   }
 
-  // --- 5. PROCESSING LOOP ---
+  // --- 4. OPTIMIZED BATCH PROCESSING LOOP ---
   let processing = false;
   
   async function runAnalysis() {
@@ -177,8 +155,6 @@
     }
 
     const items = getItemsToAnalyze();
-    console.log(`[ReviewGuard] Found ${items.length} items on ${SITE_TYPE}`);
-
     const newItems = items.filter(i => !i.getAttribute('data-rg-status'));
 
     if (newItems.length === 0) {
@@ -188,44 +164,60 @@
         return;
     }
 
-    const BATCH_SIZE = 5; 
-    for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
-        const chunk = newItems.slice(i, i + BATCH_SIZE);
-        
-        await Promise.all(chunk.map(async (node) => {
-            node.setAttribute('data-rg-status', 'pending');
-            const text = extractText(node);
-            
-            if (!text || text.length < 5) {
-                node.setAttribute('data-rg-status', 'done');
-                return; 
-            }
+    // Prepare Batches
+    const BATCH_SIZE = 5; // You can increase this to 10 if DeBERTa handles it well
+    const textBuffer = [];
+    const nodeBuffer = [];
 
-            const url = SITE_TYPE === 'AMAZON' ? PREDICT_REVIEW_URL : PREDICT_COMMENT_URL;
-            
-            try {
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ text: text })
+    // 1. Gather Valid Text
+    newItems.forEach(node => {
+        const text = extractText(node);
+        if (text && text.length > 5) {
+            textBuffer.push(text);
+            nodeBuffer.push(node);
+            node.setAttribute('data-rg-status', 'pending'); // Mark pending so we don't re-select
+        } else {
+            node.setAttribute('data-rg-status', 'done'); // Skip
+        }
+    });
+
+    // 2. Process in Chunks
+    for (let i = 0; i < textBuffer.length; i += BATCH_SIZE) {
+        const texts = textBuffer.slice(i, i + BATCH_SIZE);
+        const nodes = nodeBuffer.slice(i, i + BATCH_SIZE);
+        
+        const endpoint = SITE_TYPE === 'AMAZON' ? PREDICT_BATCH_URL : PREDICT_COMMENT_BATCH_URL;
+
+        try {
+            // SINGLE NETWORK CALL per batch
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ texts: texts })
+            });
+            const data = await res.json();
+
+            // Map results back to nodes
+            if (data.results) {
+                data.results.forEach((result, idx) => {
+                    const node = nodes[idx];
+                    const text = texts[idx];
+                    const isVerified = SITE_TYPE === 'AMAZON' && node.innerText.includes('Verified Purchase');
+                    attachBadge(node, result.label, result.confidence, isVerified, text);
                 });
-                const data = await res.json();
-                const isVerified = SITE_TYPE === 'AMAZON' && node.innerText.includes('Verified Purchase');
-                
-                // Pass text so we can use it for explanation if needed
-                attachBadge(node, data.label, data.confidence, isVerified, text);
-            } catch (e) {
-                console.error(e);
-                node.removeAttribute('data-rg-status');
             }
-        }));
+        } catch (e) {
+            console.error("Batch Error:", e);
+            // Reset status on failure so user can try again
+            nodes.forEach(n => n.removeAttribute('data-rg-status'));
+        }
     }
 
     updateButton("🔍 Scan More");
     processing = false;
   }
 
-  // --- 6. FLOATING BUTTON ---
+  // --- 5. FLOATING BUTTON ---
   function updateButton(text) {
     const btn = document.getElementById('rg-float-btn');
     if (btn) btn.textContent = text;
@@ -233,24 +225,11 @@
 
   function injectButton() {
     if (document.getElementById('rg-float-btn')) return;
-
     const btn = document.createElement('button');
     btn.id = 'rg-float-btn';
     btn.textContent = '🔍 Scan Page';
-    btn.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
-        padding: 12px 20px; background: #232f3e; color: #fff;
-        border: 2px solid #fff; border-radius: 30px;
-        font-family: sans-serif; font-weight: bold; cursor: pointer;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-        transition: transform 0.2s;
-    `;
-    
-    if (SITE_TYPE !== 'AMAZON') {
-        btn.style.background = '#1DA1F2'; 
-        btn.style.borderColor = 'transparent';
-    }
-
+    btn.style.cssText = `position: fixed; bottom: 20px; right: 20px; z-index: 2147483647; padding: 12px 20px; background: #232f3e; color: #fff; border: 2px solid #fff; border-radius: 30px; font-family: sans-serif; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: transform 0.2s;`;
+    if (SITE_TYPE !== 'AMAZON') { btn.style.background = '#1DA1F2'; btn.style.borderColor = 'transparent'; }
     btn.onmouseover = () => btn.style.transform = 'scale(1.05)';
     btn.onmouseout = () => btn.style.transform = 'scale(1)';
     btn.onclick = runAnalysis;
