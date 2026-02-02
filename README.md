@@ -33,9 +33,6 @@ The Fake Review Detector is a sophisticated machine learning application designe
 │       ├── tf_model.h5         # Trained TinyBERT model
 │       ├── tokenizer_config.json # Tokenizer configuration
 │       └── vocab.txt           # Model vocabulary
-├── data/                        # Training and evaluation datasets
-│   ├── fake_reviews_dataset.csv # Amazon reviews dataset
-│   └── hc3_flattened_balanced.csv # Social media/AI content dataset
 ├── notebooks/                   # Jupyter notebooks for research and development
 │   ├── transformer.ipynb       # Model  Experimental variants
 │   └── botorwot.ipynb          # Bot/Human classification notebook
