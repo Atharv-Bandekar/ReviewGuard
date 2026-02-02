@@ -74,13 +74,20 @@ document.addEventListener('DOMContentLoaded', () => {
             } 
             else {
                 // Social Media Logic
-                // Convert "BOT" -> "AI" for display
-                const displayLabel = data.label === 'BOT' ? 'AI' : data.label;
+                // Convert "BOT" -> "AI" for display (if backend sends 'BOT')
+                const displayLabel = (data.label === 'BOT' || data.label === 'AI') ? 'AI' : data.label;
                 labelBadge.textContent = `${displayLabel} (${pct}%)`;
 
-                if (data.label === 'BOT') labelBadge.classList.add('bot'); // Uses red style
-                else if (data.label === 'HUMAN') labelBadge.classList.add('human'); // Uses green style
-                else labelBadge.classList.add('uncertain');
+                // 🔴 FIX: Check for both 'BOT' AND 'AI' to apply Red Color
+                if (data.label === 'BOT' || data.label === 'AI') {
+                    labelBadge.classList.add('bot'); // Uses red style
+                }
+                else if (data.label === 'HUMAN') {
+                    labelBadge.classList.add('human'); // Uses green style
+                }
+                else {
+                    labelBadge.classList.add('uncertain');
+                }
             }
 
             // Show "Why?" button if successful
