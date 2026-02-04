@@ -1,7 +1,0 @@
-tensorflow>=2.10
-scikit-learn
-pandas
-numpy
-flask
-flask-cors
-nltk

@@ -1,18 +1,55 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Fake Review Detector</title>
-  <link rel="stylesheet" href="popup.css">
+    <meta charset="UTF-8">
+    <title>ReviewGuard</title>
+    <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h3>Fake Review Detector</h3>
-  <button id="analyze">Analyze Reviews</button>
-  <p id="result"></p>
-  <div id="result"> 
-    <h3 id="label"></h3>
-    <p id="confidence"></p>
-    <p id="explanation"></p>
-  </div>
-  <script src="popup.js"></script>
+
+    <header>
+        <div class="logo-area">
+            <span class="icon">🛡️</span>
+            <h1>ReviewGuard</h1>
+        </div>
+        <p class="subtitle">AI-Powered Truth Detector</p>
+    </header>
+
+    <main>
+        <div class="mode-selector">
+            <input type="radio" id="mode-review" name="mode" value="review" checked>
+            <label for="mode-review">🛒 Product Review</label>
+
+            <input type="radio" id="mode-social" name="mode" value="social">
+            <label for="mode-social">💬 Social Comment</label>
+        </div>
+
+        <textarea id="reviewInput" placeholder="Paste a review, comment, or tweet here to analyze..."></textarea>
+        
+        <button id="analyzeBtn" class="primary-btn">
+            🔍 Analyze Text
+        </button>
+
+        <div id="resultContainer" class="hidden">
+            <div class="result-card">
+                <span class="label-title">VERDICT</span>
+                <div id="labelBadge" class="badge">--</div>
+                
+                <button id="explainBtn" class="secondary-btn hidden">
+                    💡 Why?
+                </button>
+            </div>
+
+            <div id="explanationBox" class="hidden">
+                <div id="explanationText"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <span class="status-dot"></span> System Operational
+    </footer>
+
+    <script src="popup.js"></script>
 </body>
 </html>

@@ -1,255 +1,242 @@
-// content.js - robust extractor + analyze button + backend call
+// content.js - Optimized Batch Processing Version
 
 (() => {
-  const BACKEND = "http://localhost:8000/predict"; // your API
+  const API_BASE = "http://127.0.0.1:8000";
+  // We now use Batch Endpoints
+  const PREDICT_BATCH_URL = `${API_BASE}/predict_batch`; 
+  const PREDICT_COMMENT_BATCH_URL = `${API_BASE}/predict_comment_batch`; 
+  const EXPLAIN_URL = `${API_BASE}/explain`;
 
-  // Utility: safe query with multiple selectors
-  function qs(root, selectors) {
-    for (const s of selectors) {
-      const el = root.querySelector(s);
-      if (el) return el;
-    }f
-    return null;
+  // --- 1. SITE DETECTION ---
+  const HOST = window.location.hostname;
+  let SITE_TYPE = 'UNKNOWN';
+
+  if (HOST.includes('amazon')) SITE_TYPE = 'AMAZON';
+  else if (HOST.includes('youtube')) SITE_TYPE = 'YOUTUBE';
+  else if (HOST.includes('twitter') || HOST.includes('x.com')) SITE_TYPE = 'TWITTER';
+
+  console.log(`[ReviewGuard] Active on ${SITE_TYPE}`);
+
+  // --- 2. SELECTORS ---
+  function getItemsToAnalyze() {
+    if (SITE_TYPE === 'AMAZON') {
+      const nodes = Array.from(document.querySelectorAll('div[id^="customer_review-"]'));
+      return nodes.filter(n => n.offsetParent !== null);
+    } 
+    else if (SITE_TYPE === 'YOUTUBE') {
+      return Array.from(document.querySelectorAll('#content-text'));
+    } 
+    else if (SITE_TYPE === 'TWITTER') {
+      return Array.from(document.querySelectorAll('[data-testid="tweetText"]'));
+    }
+    return [];
   }
 
-  // Try multiple selectors for review blocks used across Amazon pages
-  function findReviewElements() {
-    const selList = [
-      '.review', // common
-      '.a-section.review.aok-relative', // alternate
-      '[data-hook="review"]', // data-hook style
-      '.review-item' // other variants
-    ];
-    let nodes = [];
-    for (const sel of selList) {
-      const found = Array.from(document.querySelectorAll(sel));
-      if (found.length) {
-        nodes = found;
-        break;
-      }
+  function extractText(node) {
+    if (SITE_TYPE === 'AMAZON') {
+      const standardBox = node.querySelector('[data-hook="review-body"] span') || 
+                          node.querySelector('.review-text-content span');
+      if (standardBox) return standardBox.innerText.trim();
+      
+      const clone = node.cloneNode(true);
+      ['.a-profile', '.review-date', '.video-block', '.review-title', '.review-comments'].forEach(s => 
+        clone.querySelectorAll(s).forEach(n => n.remove())
+      );
+      return clone.innerText.trim().replace(/Read more|Helpful|Report/gi, '');
+    } 
+    else {
+      return node.innerText.trim();
     }
-    // as fallback, try anything that looks like a review text container
-    if (!nodes.length) {
-      nodes = Array.from(document.querySelectorAll('.a-row .a-size-base.review-text, .review-text-content, .a-size-base.review-text'));
-    }
-    return nodes;
   }
 
-function extractReviews() {
-  // click any "Read more" to expand text
-  document.querySelectorAll('.review-data .a-expander-header a, .a-expander-prompt').forEach(btn => btn.click());
-
-  const reviewEls = document.querySelectorAll('[data-hook="review"]');
-  const reviews = [];
-  reviewEls.forEach(el => {
-    const textEl = el.querySelector('.review-text-content span, [data-hook="review-body"] span');
-    if (textEl) {
-      const fullText = textEl.innerText.trim();
-      reviews.push({ text: fullText, node: el });
-    }
-  });
-  console.log('[ReviewGuard] Extracted', reviews.length, 'reviews');
-  return reviews;
-}
-
-
-  // Call your backend
-  async function analyzeReviewText(text) {
+  // --- 3. UI HELPERS (Same as before) ---
+  async function fetchExplanation(text, label, confidence, container) {
     try {
-      const res = await fetch(BACKEND, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      if (!res.ok) {
-        console.error('[ReviewGuard] backend returned', res.status);
-        return { label: 'ERR', confidence: 0.0 };
-      }
-      return await res.json();
+        container.innerHTML = '<span class="loading-spinner">↻</span> <i>Asking AI...</i>';
+        const res = await fetch(EXPLAIN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, label, confidence })
+        });
+        const data = await res.json();
+        
+        if (data.explanation) {
+            container.innerHTML = `<b>AI Logic:</b> ${data.explanation}`;
+            container.style.borderLeft = `3px solid ${label === 'FAKE' ? '#e53935' : '#43a047'}`;
+        } else {
+            container.innerHTML = 'Could not generate explanation.';
+        }
     } catch (e) {
-      console.error('[ReviewGuard] network error', e);
-      return { label: 'ERR', confidence: 0.0 };
+        container.innerHTML = 'Error connecting to AI.';
     }
   }
 
-  // Create / return a single badge element (so we can remove duplicates)
-  function makeBadge(label, confidence) {
+  function createBadge(label, confidence, isVerified) {
     const span = document.createElement('span');
-    span.className = 'reviewguard-badge';
-    span.style.cssText = [
-      'display:inline-block',
-      'padding:2px 6px',
-      'margin-left:8px',
-      'border-radius:4px',
-      'font-weight:600',
-      'font-size:12px',
-      'color:white'
-    ].join(';');
-    if (label === 'OR') span.style.background = '#e53935';
-    else if (label === 'CG') span.style.background = '#43a047';
-    else span.style.background = '#777';
-    span.textContent = `${label} (${Math.round(confidence*100)}%)`;
+    span.className = 'rg-badge';
+    span.style.cssText = 'display:inline-block; padding:2px 6px; margin:0 5px; border-radius:4px; font-weight:700; font-size:11px; color:white; vertical-align:middle; font-family:sans-serif; z-index:9999;';
+    
+    const pct = (confidence * 100).toFixed(0);
+
+    if (label === 'GENUINE') {
+        span.style.backgroundColor = '#2e7d32'; 
+        span.textContent = `✅ GENUINE ${pct}%`;
+    } else if (label === 'FAKE') {
+        span.style.backgroundColor = isVerified ? '#ff9800' : '#d32f2f'; 
+        span.textContent = `🚫 FAKE ${pct}%`;
+    } else if (label === 'HUMAN') {
+        span.style.backgroundColor = '#2e7d32'; 
+        span.textContent = `✅ HUMAN ${pct}%`;
+    } else if (label === 'AI' || label === 'BOT') {
+        span.style.backgroundColor = '#d32f2f'; 
+        span.textContent = `🤖 AI ${pct}%`;
+    } else {
+        span.style.backgroundColor = '#9e9e9e'; 
+        span.textContent = `⚖️ UNCERTAIN ${pct}%`;
+    }
     return span;
   }
 
-  function highlightKeywordsInNode(root, keywords) {
-  const walker = document.createTreeWalker(
-    root,
-    NodeFilter.SHOW_TEXT,
-    null,
-    false
-  );
-
-  let node;
-  while ((node = walker.nextNode())) {
-    keywords.forEach(word => {
-      if (!word || word.length < 3) return;
-      const regex = new RegExp(`\\b(${word})\\b`, 'gi');
-      if (regex.test(node.nodeValue)) {
-        const span = document.createElement('span');
-        span.innerHTML = node.nodeValue.replace(
-          regex,
-          `<mark style="background:#ffe082;padding:1px;">$1</mark>`
-        );
-        node.parentNode.replaceChild(span, node);
-      }
-    });
-  }
-}
-
-
-  async function annotateReview(r) {
-    const badge = makeBadge(r.result.label, r.result.confidence ?? 0);
-    // remove previous badge if exists
-    const existing = r.node.querySelector('.reviewguard-badge');
-    if (existing) existing.remove();
-    // try to insert near the header of the review
-    const header = qs(r.node, ['.a-row', '.review-header', '.a-profile']);
-    if (header) header.insertAdjacentElement('afterend', badge);
-    else r.node.appendChild(badge);
-
-    //-----PHASE 3 MODIFICATION-----
-    if(explanation){
-      let expl=r.node.querySelector('.reviewguard-expl');
-      if(!expl){
-        expl=document.createElement('div');
-        expl.className='reviewguard-expl';
-        expl.style.cssText=
-        'margin-top:4px;font-size:12px;color:#555;font-style:italic;';
-        badge.insertAdjacentElement('afterend', expl);
-      }
-      expl.textContent=explanation;
-    }
-
-    if(keypwrds.length){
-      highlightKeywordsInNode(r.node,keywords);
-    }
-  }
-
-  async function analyzeAllReviews(ev) {
-    try {
-      ev && ev.preventDefault();
-      console.log('[ReviewGuard] analyzeAllReviews clicked');
-      const reviews = extractReviews();
-      if (!reviews.length) {
-        console.warn('[ReviewGuard] No reviews found to analyze.');
-        alert('No reviews found on this page (try scrolling to load more reviews).');
+  function attachBadge(node, label, confidence, isVerified, text) {
+    if (node.getAttribute('data-rg-status') === 'done') return;
+    if (node.querySelector('.rg-badge')) {
+        node.setAttribute('data-rg-status', 'done');
         return;
-      }
-
-      // show quick UI: progress bar in page
-      showProgress(true);
-
-      for (let i = 0; i < reviews.length; ++i) {
-        const r = reviews[i];
-        // small delay so we don't flood backend
-        await new Promise(res => setTimeout(res, 50));
-        const result = await analyzeReviewText(r.text);
-        r.result = result;
-        annotateReview(r);
-        console.log(`[ReviewGuard] #${i+1}/${reviews.length}`, result, r.text.slice(0,80));
-      }
-
-      showProgress(false);
-
-      // overall score
-      const orScores = reviews.filter(x => x.result && x.result.label === 'OR').map(x => x.result.confidence);
-      const pageScore = orScores.length ? (orScores.reduce((a,b)=>a+b,0)/orScores.length) : 0;
-      showSummary(pageScore, reviews.length, orScores.length);
-    } catch (err) {
-      console.error('[ReviewGuard] analyzeAllReviews error', err);
-      showProgress(false);
     }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'rg-wrapper';
+    wrapper.style.cssText = 'display:inline-flex; align-items:center; gap:5px; margin: 5px 0;';
+
+    const badge = createBadge(label, confidence, isVerified);
+    wrapper.appendChild(badge);
+
+    if (SITE_TYPE === 'AMAZON' && label !== 'ERR') {
+        const btn = document.createElement('button');
+        btn.textContent = '💡 Why?';
+        btn.style.cssText = 'border:1px solid #ccc; background:#fff; cursor:pointer; font-size:11px; padding:2px 8px; border-radius:10px; color:#333;';
+        
+        const explainBox = document.createElement('div');
+        explainBox.style.cssText = 'display:none; margin-top:5px; font-size:13px; color:#333; background:#f0f2f5; padding:8px; border-radius:4px; width:100%;';
+
+        btn.onclick = (e) => {
+            e.preventDefault();
+            btn.style.display = 'none'; 
+            explainBox.style.display = 'block'; 
+            fetchExplanation(text, label, confidence, explainBox);
+        };
+        wrapper.appendChild(btn);
+        
+        const header = node.querySelector('.a-profile') || node.querySelector('.review-header');
+        if (header) {
+             header.parentElement.insertBefore(wrapper, header.nextSibling);
+             wrapper.insertAdjacentElement('afterend', explainBox);
+        } else {
+             node.prepend(wrapper);
+             wrapper.insertAdjacentElement('afterend', explainBox);
+        }
+    } else {
+        if (SITE_TYPE === 'YOUTUBE') node.parentElement.insertBefore(wrapper, node);
+        else if (SITE_TYPE === 'TWITTER') node.parentElement.appendChild(wrapper);
+    }
+    node.setAttribute('data-rg-status', 'done');
   }
 
-  // UI helpers
-  function addAnalyzeButton() {
-    if (document.getElementById('reviewguard-analyze-all')) return;
+  // --- 4. OPTIMIZED BATCH PROCESSING LOOP ---
+  let processing = false;
+  
+  async function runAnalysis() {
+    if (processing) return;
+    processing = true;
+    updateButton("⏳ Scanning...");
+
+    if (SITE_TYPE === 'AMAZON') {
+        try { document.querySelectorAll('.a-expander-header a').forEach(btn => btn.click()); } catch(e) {}
+    }
+
+    const items = getItemsToAnalyze();
+    const newItems = items.filter(i => !i.getAttribute('data-rg-status'));
+
+    if (newItems.length === 0) {
+        updateButton("✅ No New Items");
+        setTimeout(() => updateButton("🔍 Scan Page"), 2000);
+        processing = false;
+        return;
+    }
+
+    // Prepare Batches
+    const BATCH_SIZE = 5; // You can increase this to 10 if DeBERTa handles it well
+    const textBuffer = [];
+    const nodeBuffer = [];
+
+    // 1. Gather Valid Text
+    newItems.forEach(node => {
+        const text = extractText(node);
+        if (text && text.length > 5) {
+            textBuffer.push(text);
+            nodeBuffer.push(node);
+            node.setAttribute('data-rg-status', 'pending'); // Mark pending so we don't re-select
+        } else {
+            node.setAttribute('data-rg-status', 'done'); // Skip
+        }
+    });
+
+    // 2. Process in Chunks
+    for (let i = 0; i < textBuffer.length; i += BATCH_SIZE) {
+        const texts = textBuffer.slice(i, i + BATCH_SIZE);
+        const nodes = nodeBuffer.slice(i, i + BATCH_SIZE);
+        
+        const endpoint = SITE_TYPE === 'AMAZON' ? PREDICT_BATCH_URL : PREDICT_COMMENT_BATCH_URL;
+
+        try {
+            // SINGLE NETWORK CALL per batch
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ texts: texts })
+            });
+            const data = await res.json();
+
+            // Map results back to nodes
+            if (data.results) {
+                data.results.forEach((result, idx) => {
+                    const node = nodes[idx];
+                    const text = texts[idx];
+                    const isVerified = SITE_TYPE === 'AMAZON' && node.innerText.includes('Verified Purchase');
+                    attachBadge(node, result.label, result.confidence, isVerified, text);
+                });
+            }
+        } catch (e) {
+            console.error("Batch Error:", e);
+            // Reset status on failure so user can try again
+            nodes.forEach(n => n.removeAttribute('data-rg-status'));
+        }
+    }
+
+    updateButton("🔍 Scan More");
+    processing = false;
+  }
+
+  // --- 5. FLOATING BUTTON ---
+  function updateButton(text) {
+    const btn = document.getElementById('rg-float-btn');
+    if (btn) btn.textContent = text;
+  }
+
+  function injectButton() {
+    if (document.getElementById('rg-float-btn')) return;
     const btn = document.createElement('button');
-    btn.id = 'reviewguard-analyze-all';
-    btn.textContent = 'Analyze All Reviews';
-    btn.style.cssText = 'position:relative;z-index:99999;padding:8px 10px;border-radius:6px;background:#ff9900;color:white;border:none;cursor:pointer;margin:8px;';
-    btn.addEventListener('click', analyzeAllReviews);
-
-    // Try to insert near review list container
-    const container = document.querySelector('#cm_cr-review_list') || document.querySelector('#reviews-medley-footer') || document.body;
-    if (container) container.prepend(btn);
-    else document.body.appendChild(btn);
-
-    // progress element
-    const p = document.createElement('div');
-    p.id = 'reviewguard-progress';
-    p.style.cssText = 'display:none;margin:8px;font-size:13px;';
-    btn.insertAdjacentElement('afterend', p);
+    btn.id = 'rg-float-btn';
+    btn.textContent = '🔍 Scan Page';
+    btn.style.cssText = `position: fixed; bottom: 20px; right: 20px; z-index: 2147483647; padding: 12px 20px; background: #232f3e; color: #fff; border: 2px solid #fff; border-radius: 30px; font-family: sans-serif; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: transform 0.2s;`;
+    if (SITE_TYPE !== 'AMAZON') { btn.style.background = '#1DA1F2'; btn.style.borderColor = 'transparent'; }
+    btn.onmouseover = () => btn.style.transform = 'scale(1.05)';
+    btn.onmouseout = () => btn.style.transform = 'scale(1)';
+    btn.onclick = runAnalysis;
+    document.body.appendChild(btn);
   }
 
-  function showProgress(show) {
-    const p = document.getElementById('reviewguard-progress');
-    if (!p) return;
-    p.style.display = show ? 'block' : 'none';
-    p.textContent = show ? 'Analyzing reviews... (this may take a few seconds)' : '';
-  }
+  injectButton();
+  setInterval(injectButton, 1000);
 
-  function showSummary(pageScore, total, suspectCount) {
-    const txt = `Page suspicious score: ${Math.round(pageScore*100)}% — ${suspectCount}/${total} flagged`;
-    console.log('[ReviewGuard] SUMMARY', txt);
-    // create a short overlay
-    let overlay = document.getElementById('reviewguard-summary');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'reviewguard-summary';
-      overlay.style.cssText = 'position:fixed;right:16px;bottom:16px;background:#222;color:white;padding:10px;border-radius:8px;z-index:999999;font-size:13px;';
-      document.body.appendChild(overlay);
-    }
-    overlay.textContent = txt;
-    setTimeout(()=> overlay.remove(), 8000);
-  }
-
-  // MutationObserver so we can add the button when reviews appear
-  const observer = new MutationObserver((mutations) => {
-    // add button only once reviews are present
-    const nodes = findReviewElements();
-    if (nodes.length) addAnalyzeButton();
-  });
-
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // Add button immediately (if page already loaded)
-  window.addEventListener('load', () => {
-    setTimeout(() => {
-      addAnalyzeButton();
-      console.log('[ReviewGuard] loaded and button added (if reviews present)');
-    }, 2000);
-  });
-
-  // Also try right away
-  setTimeout(() => {
-    addAnalyzeButton();
-  }, 1000);
-
-  // expose for debugging
-  window.ReviewGuard = {
-    extractReviews,
-    analyzeAllReviews,
-  };
 })();

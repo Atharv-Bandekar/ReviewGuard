@@ -1,0 +1,25 @@
+# Core ML Framework
+tensorflow>=2.10
+tf-keras
+
+# NLP & Model Handling
+transformers
+sentencepiece
+protobuf
+textblob
+
+# Backend API
+flask
+flask-cors
+requests
+
+# Data Processing
+numpy
+pandas
+scikit-learn
+nltk
+
+#Managing environemnt variables
+python-dotenv
+
+
