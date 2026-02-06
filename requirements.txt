@@ -1,9 +1,9 @@
 # Core ML Framework
-tensorflow>=2.10
+tensorflow==2.15.0
 tf-keras
 
 # NLP & Model Handling
-transformers
+transformers==4.32.0
 sentencepiece
 protobuf
 textblob
