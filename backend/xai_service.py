@@ -1,153 +1,155 @@
-import requests
-import json
-import os
-import random
+import torch
+import threading
+import gc
 from functools import lru_cache
-from dotenv import load_dotenv
 from textblob import TextBlob
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
 
-load_dotenv()
+# ---------------- CONFIG ----------------
+LOCAL_LLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+MAX_NEW_TOKENS = 100 
+TEMPERATURE = 0.3     
 
-# 🔴 CONFIGURATION
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# ---------------- LOAD MODEL ----------------
+_llm_tokenizer = None
+_llm_model = None
+_model_lock = threading.Lock()
 
-# 🚀 FREE MODEL LIST
-FREE_MODELS = [
-    "meta-llama/llama-3.2-3b-instruct:free",      
-    "google/gemini-2.0-flash-exp:free",           
-    "google/gemma-3-12b-it:free",                 
-    "mistralai/mistral-small-3.1-24b-instruct:free" 
-]
+def load_local_llm():
+    global _llm_model, _llm_tokenizer
+    if _llm_model is not None: return
 
-@lru_cache(maxsize=100)
-def get_cached_explanation(review_snippet, label, confidence):
-    return generate_explanation_with_fallback(review_snippet, label, confidence)
+    with _model_lock:
+        if _llm_model is None:
+            print(f"[XAI] ⏳ Loading local LLM ({LOCAL_LLM_MODEL})...")
+            try:
+                _llm_tokenizer = AutoTokenizer.from_pretrained(LOCAL_LLM_MODEL)
+                _llm_model = AutoModelForCausalLM.from_pretrained(
+                    LOCAL_LLM_MODEL,
+                    torch_dtype=torch.float32,
+                    device_map="cpu",
+                    low_cpu_mem_usage=True
+                )
+                _llm_model.eval()
+                print("[XAI] ✅ Local LLM loaded successfully.")
+            except Exception as e:
+                print(f"[XAI] ❌ Failed to load Local LLM: {e}")
+                _llm_model = "FAILED"
 
-# 🧠 SMART LOCAL ENGINE (Fallback)
+# Background load
+threading.Thread(target=load_local_llm, daemon=True).start()
+
+# ---------------- FALLBACK LOGIC ----------------
+
 def analyze_locally(text, label):
-    """
-    Rule-based logic when AI fails. 
-    Now explicitly handles 'HUMAN' and 'AI' (from app.py social route)
-    alongside 'GENUINE' and 'FAKE' (from amazon route).
-    """
+    """Fallback rule-based logic when AI fails."""
     blob = TextBlob(text)
-    polarity = blob.sentiment.polarity       # -1.0 to 1.0
-    subjectivity = blob.sentiment.subjectivity # 0.0 to 1.0
-    word_count = len(text.split())
-
-    # --- 1. AMAZON REVIEWS (Fake/Genuine) ---
-    if label == "FAKE":
-        if polarity > 0.8: return "Suspiciously over-enthusiastic and generic."
-        if word_count < 10: return "Too short and vague to be verified."
-        return "Lacks specific usage details typical of a genuine owner."
+    polarity = blob.sentiment.polarity
+    has_link = "http" in text or "www" in text
     
+    if label == "FAKE":
+        return "The review lacks specific details and uses generic, overly enthusiastic language."
     elif label == "GENUINE":
-        if word_count > 30: return "Contains specific details and balanced feedback."
-        return "Writing style is natural and consistent with a real user."
-
-    # --- 2. SOCIAL MEDIA COMMENTS (AI/Human) ---
-    # Note: app.py returns "AI" for bots, but we check "BOT" just in case.
-    elif label in ["AI", "BOT"]:
-        if "http" in text or "www" in text:
-            return "Contains external links, a common trait of spam bots."
-        elif "check my" in text.lower() or "subscribe" in text.lower():
-            return "Promotional language typical of self-promotion bots."
-        elif word_count < 5:
-            return "Extremely short and generic interaction."
-        elif polarity > 0.9:
-            return "Generic, excessive praise often used to boost engagement."
-        else:
-            return "Follows repetitive patterns typical of automated scripts."
-
+        return "The review contains balanced feedback and specific usage scenarios."
+    elif label in ["BOT", "AI"]:
+        if has_link: return "Contains external links, common in automated spam."
+        return "Follows repetitive patterns typical of automated scripts."
     elif label == "HUMAN":
-        if subjectivity > 0.5:
-            return "Shows personal opinion and emotional nuance."
-        elif "?" in text:
-            return "Asks a relevant context-aware question."
-        elif word_count > 15:
-            return "Sentence structure is complex and conversational."
-        else:
-            return "Natural, conversational phrasing."
-
+        if has_link: return "Contains a link, but context and tone suggest a human author."
+        return "Shows emotional nuance and natural conversational phrasing."
     return "Analysis unavailable."
 
-def generate_explanation_with_fallback(text, label, confidence):
-    # 1. Select Prompt based on Label Type
+# ---------------- PROMPT BUILDER ----------------
+
+def build_prompt(text, label, confidence):
     prompt = ""
     
-    # CASE A: Social Bot/AI
     if label in ["BOT", "AI"]:
         prompt = (
-            f"This social media comment is flagged as AI/BOT ({confidence:.0%} certainty). "
-            "In 1 short sentence, explain why. "
-            "Look for signs like: scam links, irrelevant self-promotion, robotic repetition, or context-less praise. "
-            "Speak naturally."
+            f"The system classified this comment as AI/BOT with {confidence:.0%} confidence. "
+            "Explain the decision by describing which textual or structural patterns influenced the model. "
+            "Do not assume intent. Mention links or generic phrasing if relevant. "
+            "Limit to 40 words."
         )
-    
-    # CASE B: Social Human
     elif label == "HUMAN":
         prompt = (
-            f"This comment looks like a real HUMAN ({confidence:.0%} certainty). "
-            "In 1 short sentence, explain why. "
-            "Mention signs like: specific reaction to the content, slang, typos, or emotional nuance. "
-            "Speak naturally."
+            f"The system classified this comment as HUMAN with {confidence:.0%} confidence. "
+            "Explain which language patterns aligned with typical human-written content. "
+            "Limit to 40 words."
         )
-
-    # CASE C: Amazon Fake
     elif label == "FAKE":
         prompt = (
-            f"This product review is flagged as FAKE ({confidence:.0%} certainty). "
-            "In 1 short sentence, explain why. "
-            "Look for: generic marketing buzzwords, lack of specific details, or robotic enthusiasm. "
-            "Speak naturally."
+            f"The system classified this review as FAKE with {confidence:.0%} confidence. "
+            "Explain which linguistic patterns aligned with fake reviews (e.g., generic buzzwords). "
+            "Limit to 40 words."
         )
-
-    # CASE D: Amazon Genuine
     else: # GENUINE
         prompt = (
-            f"This product review looks GENUINE ({confidence:.0%} certainty). "
-            "In 1 short sentence, explain why. "
-            "Mention how it offers balanced pros/cons or specific usage scenarios. "
-            "Speak naturally."
+            f"The system classified this review as GENUINE with {confidence:.0%} confidence. "
+            "Explain which language features aligned with genuine reviews (e.g., specific details). "
+            "Limit to 40 words."
         )
 
-    # 2. Try Models (With reduced timeout)
-    # Only try AI if we have a key, otherwise jump to local
-    if OPENROUTER_API_KEY:
-        for model in FREE_MODELS:
-            try:
-                payload = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": f"{prompt}\n\nTEXT:\n{text[:300]}"}],
-                    "temperature": 0.7, 
-                }
-                
-                headers = {
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "http://localhost:8000", 
-                    "X-Title": "ReviewGuard"
-                }
+    if confidence < 0.80:
+        prompt += " Acknowledge that signals were mixed."
 
-                # ⚡ FAST TIMEOUT: 4 Seconds ⚡
-                response = requests.post(OPENROUTER_URL, headers=headers, data=json.dumps(payload), timeout=8)
-                
-                if response.status_code == 200:
-                    content = response.json()['choices'][0]['message']['content'].strip()
-                    # Cleanup: remove quotes if the model adds them
-                    content = content.replace('"', '').replace("'", "")
-                    if content: return content
-                
-            except Exception:
-                continue # Try next model or fall through
-    else:
-        print("⚠️ No API Key found. Skipping AI models.")
+    messages = [
+        {"role": "system", "content": "You are an analytical AI tool explaining model behavior. Be precise and objective."},
+        {"role": "user", "content": f"{prompt}\n\nAnalysis Text: \"{text[:300]}\""}
+    ]
+    
+    if _llm_tokenizer.chat_template:
+        return _llm_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return f"System: Analyze.\nUser: {prompt}\nText: {text[:300]}\nAssistant:"
 
-    # 3. Fallback
-    print(f"⚠️ AI unavailable for label '{label}'. Using Local Logic.")
-    return analyze_locally(text, label)
+# ---------------- STREAMING GENERATOR ----------------
 
-def get_explanation(review_text, label, confidence):
-    # Cache key is short text + label to avoid long keys
-    return get_cached_explanation(review_text[:100], label, confidence)
+def stream_explanation(text, label, confidence):
+    """Yields text chunks as they are generated."""
+    load_local_llm()
+    if _llm_model == "FAILED":
+        yield analyze_locally(text, label) # Fallback to textblob if LLM dies
+        return
+
+    try:
+        prompt = build_prompt(text, label, confidence)
+        inputs = _llm_tokenizer(prompt, return_tensors="pt")
+        
+        # 1. REMOVE any print statements here
+        # print(f"[XAI] Generating...") <--- DELETE THIS
+
+        # 2. Setup the Iterator Streamer (This captures text, doesn't print it)
+        streamer = TextIteratorStreamer(_llm_tokenizer, skip_prompt=True, skip_special_tokens=True)
+        
+        generation_kwargs = dict(
+            **inputs,
+            streamer=streamer,
+            max_new_tokens=MAX_NEW_TOKENS,
+            temperature=TEMPERATURE,
+            do_sample=True,
+            pad_token_id=_llm_tokenizer.eos_token_id
+        )
+
+        # 3. Start generation in a thread
+        thread = threading.Thread(target=_llm_model.generate, kwargs=generation_kwargs)
+        thread.start()
+
+        # 4. Yield tokens (The terminal remains silent)
+        for new_text in streamer:
+            yield new_text
+            
+        gc.collect()
+
+    except Exception as e:
+        yield f"Error: {str(e)}"
+
+# ---------------- STATIC GENERATOR (LEGACY SUPPORT) ----------------
+
+@lru_cache(maxsize=100)
+def get_explanation(text, label, confidence):
+    """Non-streaming version for the old /explain endpoint."""
+    # We can just consume the stream to build the string
+    full_text = ""
+    for chunk in stream_explanation(text, label, confidence):
+        full_text += chunk
+    return full_text
