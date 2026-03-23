@@ -106,38 +106,67 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 3. EXPLAIN FUNCTION (XAI)
+    // 3. EXPLAIN FUNCTION (STREAMING WITH TYPING EFFECT)
     explainBtn.addEventListener('click', async () => {
         if (!currentResult) return;
-
-        // UI Updates
-        explainBtn.textContent = "Thinking...";
+        
+        // UI Reset
         explainBtn.disabled = true;
-
+        explanationBox.classList.remove('hidden');
+        explanationText.innerHTML = "<strong>Analyzing...</strong> "; 
+        
         try {
-            const response = await fetch('http://127.0.0.1:8000/explain', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    text: reviewInput.value.trim(),
-                    label: currentResult.label,
-                    confidence: currentResult.confidence
-                })
+            // Construct URL for GET request
+            const params = new URLSearchParams({
+                text: reviewInput.value.trim(),
+                label: currentResult.label,
+                confidence: currentResult.confidence
             });
 
-            const data = await response.json();
+            const response = await fetch(`http://127.0.0.1:8000/explain_stream?${params.toString()}`);
+            
+            if (!response.body) {
+                throw new Error("ReadableStream not supported.");
+            }
 
-            // Show Explanation
-            explanationBox.classList.remove('hidden');
-            explanationText.innerHTML = `<strong>AI Insight:</strong> ${data.explanation || "No explanation available."}`;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            
+            // Clear "Analyzing..." text
+            explanationText.innerHTML = "<strong>AI Insight:</strong> "; 
+
+            // Read the stream loop
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                // Decode chunk
+                const chunk = decoder.decode(value, { stream: true });
+                
+                // Use the smooth typer helper
+                await typeOutChunk(explanationText, chunk);
+            }
 
         } catch (error) {
             console.error(error);
-            explanationText.textContent = "Could not fetch explanation.";
-            explanationBox.classList.remove('hidden');
+            explanationText.textContent += "\n[Connection interrupted]";
         } finally {
-            explainBtn.textContent = "💡 Why?";
+            explainBtn.textContent = "💡 Regenerate";
             explainBtn.disabled = false;
         }
     });
-});
+
+        // --- HELPER FUNCTION (Place this OUTSIDE the listener, at the bottom of the file) ---
+        async function typeOutChunk(element, text) {
+            for (const char of text) {
+                element.textContent += char;
+                // 5ms delay per character = smooth typing effect
+                await new Promise(r => setTimeout(r, 5)); 
+                
+                // Auto-scroll to bottom of the box
+                if(element.parentElement) {
+                    element.parentElement.scrollTop = element.parentElement.scrollHeight;
+                }
+            }
+        }
+    });

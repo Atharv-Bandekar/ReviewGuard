@@ -1,11 +1,11 @@
-// content.js - Optimized Batch Processing Version
+// content.js - Optimized Batch Processing + Streaming Explanations
 
 (() => {
   const API_BASE = "http://127.0.0.1:8000";
-  // We now use Batch Endpoints
+  // Endpoints
   const PREDICT_BATCH_URL = `${API_BASE}/predict_batch`; 
   const PREDICT_COMMENT_BATCH_URL = `${API_BASE}/predict_comment_batch`; 
-  const EXPLAIN_URL = `${API_BASE}/explain`;
+  const EXPLAIN_STREAM_URL = `${API_BASE}/explain_stream`; // <--- NEW ENDPOINT
 
   // --- 1. SITE DETECTION ---
   const HOST = window.location.hostname;
@@ -49,25 +49,59 @@
     }
   }
 
-  // --- 3. UI HELPERS (Same as before) ---
+  // --- 3. UI HELPERS ---
+
+  // 🟢 NEW: Streaming Explanation Function
   async function fetchExplanation(text, label, confidence, container) {
     try {
+        // UI Reset
         container.innerHTML = '<span class="loading-spinner">↻</span> <i>Asking AI...</i>';
-        const res = await fetch(EXPLAIN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, label, confidence })
+        container.style.display = 'block';
+
+        // Construct URL Params for GET request
+        const params = new URLSearchParams({
+            text: text.substring(0, 300), // Limit text length for URL safety
+            label: label,
+            confidence: confidence
         });
-        const data = await res.json();
+
+        // Fetch Stream
+        const response = await fetch(`${EXPLAIN_STREAM_URL}?${params.toString()}`);
         
-        if (data.explanation) {
-            container.innerHTML = `<b>AI Logic:</b> ${data.explanation}`;
-            container.style.borderLeft = `3px solid ${label === 'FAKE' ? '#e53935' : '#43a047'}`;
-        } else {
-            container.innerHTML = 'Could not generate explanation.';
+        if (!response.body) throw new Error("Stream not supported");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        // Prepare container for typing
+        container.innerHTML = '<b>AI Logic:</b> ';
+        container.style.borderLeft = `3px solid ${['FAKE', 'AI', 'BOT'].includes(label) ? '#e53935' : '#43a047'}`;
+
+        // Read Loop
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            
+            // Smooth Type Effect
+            await typeOutChunk(container, chunk);
         }
+
     } catch (e) {
+        console.error(e);
         container.innerHTML = 'Error connecting to AI.';
+    }
+  }
+
+  // 🟢 NEW: Smooth Typing Helper
+  async function typeOutChunk(element, text) {
+    // Append text node to avoid destroying '<b>AI Logic:</b>'
+    // or just append to innerHTML if simple
+    for (const char of text) {
+        element.innerHTML += char; 
+        // 5ms delay = smooth typing look
+        await new Promise(r => setTimeout(r, 5)); 
     }
   }
 
@@ -111,18 +145,18 @@
     const badge = createBadge(label, confidence, isVerified);
     wrapper.appendChild(badge);
 
+    // Only add "Why?" button for Amazon reviews for now (can expand later)
     if (SITE_TYPE === 'AMAZON' && label !== 'ERR') {
         const btn = document.createElement('button');
         btn.textContent = '💡 Why?';
         btn.style.cssText = 'border:1px solid #ccc; background:#fff; cursor:pointer; font-size:11px; padding:2px 8px; border-radius:10px; color:#333;';
         
         const explainBox = document.createElement('div');
-        explainBox.style.cssText = 'display:none; margin-top:5px; font-size:13px; color:#333; background:#f0f2f5; padding:8px; border-radius:4px; width:100%;';
+        explainBox.style.cssText = 'display:none; margin-top:5px; font-size:13px; color:#333; background:#f0f2f5; padding:8px; border-radius:4px; width:100%; line-height: 1.4;';
 
         btn.onclick = (e) => {
             e.preventDefault();
             btn.style.display = 'none'; 
-            explainBox.style.display = 'block'; 
             fetchExplanation(text, label, confidence, explainBox);
         };
         wrapper.appendChild(btn);
@@ -165,7 +199,7 @@
     }
 
     // Prepare Batches
-    const BATCH_SIZE = 5; // You can increase this to 10 if DeBERTa handles it well
+    const BATCH_SIZE = 5; 
     const textBuffer = [];
     const nodeBuffer = [];
 
@@ -175,9 +209,9 @@
         if (text && text.length > 5) {
             textBuffer.push(text);
             nodeBuffer.push(node);
-            node.setAttribute('data-rg-status', 'pending'); // Mark pending so we don't re-select
+            node.setAttribute('data-rg-status', 'pending'); 
         } else {
-            node.setAttribute('data-rg-status', 'done'); // Skip
+            node.setAttribute('data-rg-status', 'done'); 
         }
     });
 
@@ -208,7 +242,6 @@
             }
         } catch (e) {
             console.error("Batch Error:", e);
-            // Reset status on failure so user can try again
             nodes.forEach(n => n.removeAttribute('data-rg-status'));
         }
     }
