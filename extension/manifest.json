@@ -1,18 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "ReviewGuard & BotHunter",
+  "name": "ReviewGuard - E-Commerce Truth Detector",
   "version": "2.0",
-  "description": "Detects fake reviews on Amazon and bots on YouTube/X in real time",
+  "description": "Detects fake, promotional, and AI-assisted product reviews on Amazon in real time.",
   "permissions": ["activeTab", "scripting"],
   "host_permissions": [
     "http://127.0.0.1:8000/*", 
     "https://www.amazon.com/*",
     "https://www.amazon.in/*",
     "https://www.amazon.co.uk/*",
-    "https://www.amazon.ca/*",
-    "https://www.youtube.com/*",
-    "https://twitter.com/*",
-    "https://x.com/*"
+    "https://www.amazon.ca/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",
@@ -24,10 +21,7 @@
         "https://www.amazon.com/*",
         "https://www.amazon.in/*",
         "https://www.amazon.co.uk/*",
-        "https://www.amazon.ca/*",
-        "https://www.youtube.com/*",
-        "https://twitter.com/*",
-        "https://x.com/*"
+        "https://www.amazon.ca/*"
       ],
       "js": ["content.js"]
     }

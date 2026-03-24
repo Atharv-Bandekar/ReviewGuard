@@ -1,3 +1,5 @@
+// popup.js - E-commerce Only (4-Quadrant Labels)
+
 document.addEventListener('DOMContentLoaded', () => {
     
     // 1. Select Elements
@@ -8,7 +10,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const explainBtn = document.getElementById('explainBtn');
     const explanationBox = document.getElementById('explanationBox');
     const explanationText = document.getElementById('explanationText');
-    const modeRadios = document.getElementsByName('mode'); // Get radio buttons
 
     // Store state
     let currentResult = null;
@@ -23,21 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // --- A. Determine Selected Mode ---
-        let selectedMode = 'review'; // Default
-        for (const radio of modeRadios) {
-            if (radio.checked) {
-                selectedMode = radio.value;
-                break;
-            }
-        }
-
-        // --- B. Choose Endpoint ---
-        // Review Mode -> DeBERTa Model
-        // Social Mode -> TinyBERT Model
-        const endpoint = selectedMode === 'review' 
-            ? 'http://127.0.0.1:8000/predict' 
-            : 'http://127.0.0.1:8000/predict_comment';
+        // Single endpoint for E-commerce reviews
+        const endpoint = 'http://127.0.0.1:8000/predict'; 
 
         // UI Updates: Show loading
         analyzeBtn.innerHTML = '<span class="loading-spinner">↻</span> Scanning...';
@@ -47,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
         explanationBox.classList.add('hidden');
 
         try {
-            // --- C. Call Backend ---
+            // --- Call Backend ---
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -60,34 +48,30 @@ document.addEventListener('DOMContentLoaded', () => {
             // Show Result container
             resultContainer.classList.remove('hidden');
             
-            // --- D. Format Badge & Label ---
+            // --- Format Badge & Label (4-Quadrant System) ---
             const pct = Math.round(data.confidence * 100);
-            labelBadge.className = "badge"; // Reset classes
+            const label = data.label;
+            
+            // Reset styles
+            labelBadge.className = "badge"; 
+            labelBadge.style.color = '#fff'; // Default text color
 
-            if (selectedMode === 'review') {
-                // Amazon/Product Logic
-                labelBadge.textContent = `${data.label} (${pct}%)`;
-                
-                if (data.label === 'FAKE') labelBadge.classList.add('fake');
-                else if (data.label === 'GENUINE') labelBadge.classList.add('genuine');
-                else labelBadge.classList.add('uncertain');
-            } 
-            else {
-                // Social Media Logic
-                // Convert "BOT" -> "AI" for display (if backend sends 'BOT')
-                const displayLabel = (data.label === 'BOT' || data.label === 'AI') ? 'AI' : data.label;
-                labelBadge.textContent = `${displayLabel} (${pct}%)`;
-
-                // 🔴 FIX: Check for both 'BOT' AND 'AI' to apply Red Color
-                if (data.label === 'BOT' || data.label === 'AI') {
-                    labelBadge.classList.add('bot'); // Uses red style
-                }
-                else if (data.label === 'HUMAN') {
-                    labelBadge.classList.add('human'); // Uses green style
-                }
-                else {
-                    labelBadge.classList.add('uncertain');
-                }
+            if (label.includes('Genuine-style, Human-written')) {
+                labelBadge.style.backgroundColor = '#2e7d32'; // Green
+                labelBadge.textContent = `✅ ${label} (${pct}%)`;
+            } else if (label.includes('Genuine-style, AI-assisted')) {
+                labelBadge.style.backgroundColor = '#fbc02d'; // Yellow
+                labelBadge.style.color = '#000'; // Dark text for yellow bg
+                labelBadge.textContent = `⚠️ ${label} (${pct}%)`;
+            } else if (label.includes('Promotional-style, Human-written')) {
+                labelBadge.style.backgroundColor = '#d32f2f'; // Red
+                labelBadge.textContent = `🚫 ${label} (${pct}%)`;
+            } else if (label.includes('Promotional-style, AI-assisted')) {
+                labelBadge.style.backgroundColor = '#b71c1c'; // Dark Red
+                labelBadge.textContent = `🚫 ${label} (${pct}%)`;
+            } else {
+                labelBadge.style.backgroundColor = '#9e9e9e'; // Grey
+                labelBadge.textContent = `⚖️ ${label} (${pct}%)`;
             }
 
             // Show "Why?" button if successful
@@ -98,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error(error);
             labelBadge.textContent = "Connection Error";
-            labelBadge.className = "badge uncertain";
+            labelBadge.style.backgroundColor = "#9e9e9e";
             resultContainer.classList.remove('hidden');
         } finally {
             analyzeBtn.textContent = "🔍 Analyze Text";
@@ -149,24 +133,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error(error);
-            explanationText.textContent += "\n[Connection interrupted]";
+            explanationText.innerHTML += "<br>[Connection interrupted]";
         } finally {
             explainBtn.textContent = "💡 Regenerate";
             explainBtn.disabled = false;
         }
     });
 
-        // --- HELPER FUNCTION (Place this OUTSIDE the listener, at the bottom of the file) ---
-        async function typeOutChunk(element, text) {
-            for (const char of text) {
-                element.textContent += char;
-                // 5ms delay per character = smooth typing effect
-                await new Promise(r => setTimeout(r, 5)); 
-                
-                // Auto-scroll to bottom of the box
-                if(element.parentElement) {
-                    element.parentElement.scrollTop = element.parentElement.scrollHeight;
-                }
+    // --- HELPER FUNCTION ---
+    async function typeOutChunk(element, text) {
+        for (const char of text) {
+            // Append safely to innerHTML so we don't destroy the <strong> tag
+            element.innerHTML += char;
+            // 5ms delay per character = smooth typing effect
+            await new Promise(r => setTimeout(r, 5)); 
+            
+            // Auto-scroll to bottom of the box
+            if(element.parentElement) {
+                element.parentElement.scrollTop = element.parentElement.scrollHeight;
             }
         }
-    });
+    }
+});

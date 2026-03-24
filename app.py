@@ -2,10 +2,11 @@ from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import os
 import tensorflow as tf
-from transformers import DebertaV2Tokenizer, TFDebertaV2ForSequenceClassification, AutoTokenizer, TFAutoModelForSequenceClassification
+from transformers import DebertaV2Tokenizer, TFDebertaV2ForSequenceClassification
 import traceback
 import threading
-import re  # <--- CRITICAL IMPORT FOR LINK STRIPPING
+import re
+import math
 
 # Import XAI Service
 from backend.xai_service import get_explanation, stream_explanation
@@ -19,19 +20,16 @@ CORS(app)
 
 BASE = os.path.dirname(__file__)
 MODEL_DIR_AMAZON = os.path.join(BASE, 'backend', 'model')          # DeBERTa
-MODEL_DIR_SOCIAL = os.path.join(BASE, 'backend', 'model_tinybert') # TinyBERT
 
 # --- GLOBAL VARIABLES ---
 amazon_model = None
 amazon_tokenizer = None
-social_model = None
-social_tokenizer = None
 
 # --- LOADER FUNCTIONS ---
 def preload_amazon_model():
     global amazon_model, amazon_tokenizer
     print("---------------------------------------------------------------")
-    print("Loading Amazon DeBERTa Model...")
+    print("Loading Amazon DeBERTa Model (Fraud-Style Axis)...")
     print("---------------------------------------------------------------")
     try:
         amazon_tokenizer = DebertaV2Tokenizer.from_pretrained(MODEL_DIR_AMAZON)
@@ -40,61 +38,93 @@ def preload_amazon_model():
     except Exception as e:
         print(f"Error loading Amazon model: {e}")
 
-def get_social_model():
-    global social_model, social_tokenizer
-    if social_model is None:
-        print(f"Loading Social TinyBERT model...")
-        try:
-            social_tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR_SOCIAL)
-            social_model = TFAutoModelForSequenceClassification.from_pretrained(MODEL_DIR_SOCIAL)
-            print("Social model loaded successfully.")
-        except Exception as e:
-            print(f"Error loading Social model: {e}")
-            return None, None
-    return social_model, social_tokenizer
+# --- AXIS 2: HEURISTICS ENGINE (AI vs Human) ---
+def calculate_ai_likelihood(text):
+    """Dynamically calculates probability of AI generation based on linguistic heuristics"""
+    if not text or len(text.strip()) == 0:
+        return 0.0
 
-# --- HELPER: TEXT CLEANING ---
-def strip_links(text):
-    """Removes http/https/www links to test content without url bias"""
-    return re.sub(r'http\S+|www\.\S+', '', text).strip()
+    score = 0.0
+    
+    # Extract purely alphabetic words
+    words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
+    if len(words) < 5: return 0.0
+    
+    # ---------------------------------------------------------
+    # 1. LEXICAL COMPLEXITY (Replaces Hardcoded Buzzwords)
+    # ---------------------------------------------------------
+    # Humans write conversational Amazon reviews (avg word length ~4.2 - 4.6 chars).
+    # AI mathematically skews toward denser, academic text (avg 5.2 - 6.0+ chars).
+    
+    complex_words = sum(1 for w in words if len(w) >= 7) # Proxy for 3+ syllables
+    complex_word_ratio = complex_words / len(words)
+    avg_word_length = sum(len(w) for w in words) / len(words)
 
-# --- HELPER: PROCESS PREDICTION ---
-def process_amazon_probs(probs):
-    fake_score = float(probs[1])
-    real_score = float(probs[0])
-    
-    if fake_score > 0.60:
-        label = "FAKE"
-        conf = fake_score
-    elif real_score > 0.60:
-        label = "GENUINE"
-        conf = real_score
-    else:
-        label = "UNCERTAIN"
-        conf = max(fake_score, real_score)
-    
-    # Return Label, Confidence, AND Raw Breakdown
-    scores = {"GENUINE": real_score, "FAKE": fake_score}
-    return label, min(conf, 0.99), scores
-
-def process_social_probs(probs):
-    bot_score = float(probs[1])
-    human_score = float(probs[0])
-    
-    if bot_score > 0.70:
-        label = "AI"
-        conf = bot_score
-    else:
-        label = "HUMAN"
-        conf = human_score
+    # If the text is dense with complex vocabulary, flag it
+    if avg_word_length > 5.5 and complex_word_ratio > 0.25:
+        score += 0.35  # Heavy penalty for highly academic structure
+    elif avg_word_length > 5.0 and complex_word_ratio > 0.18:
+        score += 0.15
         
-    # Return Label, Confidence, AND Raw Breakdown
-    scores = {"HUMAN": human_score, "AI": bot_score}
-    return label, min(conf, 0.99), scores
+    # ---------------------------------------------------------
+    # 2. SENTENCE LENGTH UNIFORMITY
+    # ---------------------------------------------------------
+    sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+    if len(sentences) > 1:
+        lengths = [len(s.split()) for s in sentences]
+        mean_len = sum(lengths) / len(lengths)
+        variance = sum((l - mean_len) ** 2 for l in lengths) / len(lengths)
+        
+        # AI creates highly uniform, perfectly paced sentences (low variance)
+        if variance < 10 and mean_len > 12: 
+            score += 0.35
+        elif variance < 20:
+            score += 0.15
+            
+    # ---------------------------------------------------------
+    # 3. TYPE-TOKEN RATIO (Repetitiveness)
+    # ---------------------------------------------------------
+    unique_words = len(set(words))
+    ttr = unique_words / len(words)
+    
+    # AI repeats structural words more often than humans
+    if len(words) > 40 and ttr < 0.45:
+        score += 0.2 
+        
+    return min(score, 0.95) # Cap at 95% certainty for heuristics
+
+# --- HELPER: PROCESS PREDICTIONS ---
+def get_combined_assessment(fake_score, real_score, ai_score):
+    # Axis 1: Fraud Style (DeBERTa)
+    if fake_score > 0.60:
+        style = "Promotional-style"
+        style_conf = fake_score
+    elif real_score > 0.60:
+        style = "Genuine-style"
+        style_conf = real_score
+    else:
+        style = "Uncertain-style"
+        style_conf = max(fake_score, real_score)
+        
+    # Axis 2: Authorship (Heuristics)
+    if ai_score >= 0.50:
+        author = "AI-assisted"
+        author_conf = ai_score
+    else:
+        author = "Human-written"
+        author_conf = 1.0 - ai_score # Inverse score for human confidence
+
+    # Final Combined Label & Averaged Confidence
+    combined_label = f"{style}, {author}"
+    final_conf = (style_conf + author_conf) / 2.0
+    
+    # Strictly cap the maximum confidence at 0.99 (99%)
+    final_conf = min(final_conf, 0.99)
+    
+    return combined_label, final_conf
 
 # --- ROUTES ---
 
-# Batch prediction endpoint (Amazon)
 @app.route('/predict_batch', methods=['POST'])
 def predict_batch():
     if not amazon_model: return jsonify({'error': 'Amazon Model is loading.'}), 503
@@ -103,21 +133,34 @@ def predict_batch():
         texts = data.get('texts', [])
         if not texts: return jsonify({'results': []})
 
+        # Axis 1: DeBERTa Inference
         inputs = amazon_tokenizer(texts, return_tensors="tf", truncation=True, padding=True, max_length=128)
         logits = amazon_model(inputs).logits
         probs_batch = tf.nn.softmax(logits, axis=1).numpy()
         
         results = []
-        for probs in probs_batch:
-            label, conf, scores = process_amazon_probs(probs)
-            # Add 'scores' to output
+        for i, text in enumerate(texts):
+            probs = probs_batch[i]
+            fake_score = float(probs[1])
+            real_score = float(probs[0])
+            
+            # Axis 2: Heuristics Inference
+            ai_score = calculate_ai_likelihood(text)
+            
+            label, conf = get_combined_assessment(fake_score, real_score, ai_score)
+            
+            scores = {
+                "fraud_style_score": fake_score, 
+                "genuine_style_score": real_score,
+                "ai_likelihood_score": ai_score
+            }
             results.append({'label': label, 'confidence': conf, 'scores': scores})
 
         return jsonify({'results': results})
     except Exception as e:
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-# Single review prediction endpoint (Amazon)
 @app.route('/predict', methods=['POST'])
 def predict_review():
     if not amazon_model: return jsonify({'error': 'Amazon Model is loading.'}), 503
@@ -125,110 +168,36 @@ def predict_review():
         data = request.json
         text = data.get('text', '')
         
+        # Axis 1
         inputs = amazon_tokenizer([text], return_tensors="tf", truncation=True, padding=True, max_length=128)
         logits = amazon_model(inputs).logits
         probs = tf.nn.softmax(logits, axis=1).numpy()[0]
         
-        label, conf, scores = process_amazon_probs(probs)
+        # Axis 2
+        ai_score = calculate_ai_likelihood(text)
+        
+        label, conf = get_combined_assessment(float(probs[1]), float(probs[0]), ai_score)
+        
+        scores = {
+            "fraud_style_score": float(probs[1]), 
+            "genuine_style_score": float(probs[0]),
+            "ai_likelihood_score": ai_score
+        }
         
         return jsonify({'label': label, 'confidence': conf, 'scores': scores})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# Single comment prediction endpoint (Social) WITH SMART LOGIC
-@app.route('/predict_comment', methods=['POST'])
-def predict_comment():
-    model, tokenizer = get_social_model()
-    if not model: return jsonify({'error': 'Social Model missing'}), 500
-    try:
-        data = request.json
-        text = data.get('text', '')
-        
-        # 1. Run Original Inference
-        inputs = tokenizer([text], return_tensors="tf", truncation=True, padding=True, max_length=128)
-        probs_orig = tf.nn.softmax(model(inputs).logits, axis=1).numpy()[0]
-        
-        # 2. Run Stripped (Link Check)
-        text_stripped = strip_links(text)
-        has_link = len(text) > len(text_stripped)
-        
-        label, conf, scores = process_social_probs(probs_orig)
-
-        # 3. Smart Override Logic
-        if has_link:
-            inputs_strip = tokenizer([text_stripped], return_tensors="tf", truncation=True, padding=True, max_length=128)
-            probs_strip = tf.nn.softmax(model(inputs_strip).logits, axis=1).numpy()[0]
-            
-            bot_score_orig = float(probs_orig[1])
-            bot_score_strip = float(probs_strip[1])
-
-            # Override if removing link flips AI -> Human
-            if bot_score_orig > 0.70 and bot_score_strip < 0.60:
-                print(f"[SmartFix] Override: Link caused FP. Orig: {bot_score_orig:.2f} -> Strip: {bot_score_strip:.2f}")
-                # Use the STRIPPED probability for the final output
-                label, conf, scores = process_social_probs(probs_strip)
-
-        return jsonify({'label': label, 'confidence': conf, 'scores': scores})
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# Batch comment prediction endpoint (Social) WITH SMART LOGIC
-@app.route('/predict_comment_batch', methods=['POST'])
-def predict_comment_batch():
-    model, tokenizer = get_social_model()
-    if not model: return jsonify({'error': 'Social Model missing'}), 500
-    try:
-        data = request.json
-        original_texts = data.get('texts', [])
-        if not original_texts: return jsonify({'results': []})
-
-        # 1. Prepare Stripped Versions
-        stripped_texts = [strip_links(t) for t in original_texts]
-
-        # 2. Run Inference
-        inputs_orig = tokenizer(original_texts, return_tensors="tf", truncation=True, padding=True, max_length=128)
-        logits_orig = model(inputs_orig).logits
-        probs_orig = tf.nn.softmax(logits_orig, axis=1).numpy()
-
-        inputs_strip = tokenizer(stripped_texts, return_tensors="tf", truncation=True, padding=True, max_length=128)
-        logits_strip = model(inputs_strip).logits
-        probs_strip = tf.nn.softmax(logits_strip, axis=1).numpy()
-        
-        results = []
-        for i in range(len(original_texts)):
-            # Default to original scores
-            label, conf, scores = process_social_probs(probs_orig[i])
-            
-            # Smart Override Check
-            bot_score_orig = float(probs_orig[i][1])
-            bot_score_strip = float(probs_strip[i][1])
-            has_link = len(original_texts[i]) > len(stripped_texts[i])
-
-            if has_link and bot_score_orig > 0.70 and bot_score_strip < 0.60:
-                 # Use the stripped scores
-                 label, conf, scores = process_social_probs(probs_strip[i])
-            
-            results.append({'label': label, 'confidence': conf, 'scores': scores})
-            
-        return jsonify({'results': results})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 # STREAMING EXPLANATION ENDPOINT
 @app.route('/explain_stream', methods=['GET'])
 def explain_stream():
-    # Get params from query string (GET request is easier for EventSource/Streams)
     text = request.args.get('text', '')
     label = request.args.get('label', 'UNKNOWN')
     confidence = float(request.args.get('confidence', 0))
 
     def generate():
-        # Yield chunks directly to the client
         for chunk in stream_explanation(text, label, confidence):
-            if chunk:
-                # We just send raw text for simple streaming fetch
-                yield chunk
+            if chunk: yield chunk
 
     return Response(stream_with_context(generate()), mimetype='text/plain')
 
