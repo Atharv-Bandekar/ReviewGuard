@@ -55,7 +55,7 @@ Powered by a DeBERTa sequence classifier, an algorithmic Heuristics Engine, and 
 1.  **Clone the repository**:
 
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/Atharv-Bandekar/fakeReviewDetector.git
     cd fakeReviewDetector
     ```
 
@@ -178,5 +178,3 @@ Contributions to improve detection algorithms or expand platform support are wel
 
 This project is licensed under the MIT License - see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
 
-```
-```
