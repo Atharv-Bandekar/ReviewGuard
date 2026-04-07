@@ -1,154 +1,113 @@
-import torch
-import threading
-import gc
-from functools import lru_cache
-from textblob import TextBlob
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+"""
+xai_service.py — v7.1 (Matrix Edition with Pragmatic Nuance)
 
-# ---------------- CONFIG ----------------
-LOCAL_LLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
-# Sweet spot for token length: Enough for a solid paragraph, prevents cut-offs
-MAX_NEW_TOKENS = 150   
-TEMPERATURE = 0.6     
+XAI pipeline:
+  1. Receives raw text, DeBERTa label (Style + Authorship), and confidence.
+  2. Feeds context to Groq (LLaMA 3) with a strict 2x2 matrix system prompt.
+  3. Groq natively cross-references the Style axis with the Authorship axis.
+  4. Streams a single, coherent sentence back to the frontend.
+  5. Pure-Python template fallback if the API fails.
+"""
 
-# ---------------- LOAD MODEL ----------------
-_llm_tokenizer = None
-_llm_model = None
-_model_lock = threading.Lock()
+import time
+import os
+import requests
+from dotenv import load_dotenv
 
-def load_local_llm():
-    global _llm_model, _llm_tokenizer
-    if _llm_model is not None: return
+load_dotenv()
 
-    with _model_lock:
-        if _llm_model is None:
-            print(f"[XAI] ⏳ Loading local LLM ({LOCAL_LLM_MODEL})...")
-            try:
-                _llm_tokenizer = AutoTokenizer.from_pretrained(LOCAL_LLM_MODEL)
-                if _llm_tokenizer.pad_token is None:
-                    _llm_tokenizer.pad_token = _llm_tokenizer.eos_token
-                    
-                _llm_model = AutoModelForCausalLM.from_pretrained(
-                    LOCAL_LLM_MODEL,
-                    torch_dtype=torch.float32,
-                    device_map="cpu",
-                    low_cpu_mem_usage=True
-                )
-                _llm_model.eval()
-                print("[XAI] ✅ Local LLM loaded successfully.")
-            except Exception as e:
-                print(f"[XAI] ❌ Failed to load Local LLM: {e}")
-                _llm_model = "FAILED"
+# ── Module-level state ──────────────
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL   = "llama-3.1-8b-instant"
+_WORD_DELAY  = 0.04
 
-# Background load
-threading.Thread(target=load_local_llm, daemon=True).start()
+def load_explainer(app_model, app_tokenizer):
+    """
+    Kept for compatibility with app.py's boot sequence.
+    """
+    print("[XAI] Explainer loaded (Pure LLM Matrix Mode).")
 
-# ---------------- FALLBACK LOGIC ----------------
+# ──────────────────────────────────────────────────────────────────
+# GROQ NARRATION
+# ──────────────────────────────────────────────────────────────────
 
-def analyze_locally(text, label):
-    """Fallback rule-based logic when AI fails."""
-    if "Genuine-style, Human-written" in label:
-        return "This reads naturally. The varied sentence structure and specific details strongly suggest a real person wrote this."
-    elif "Genuine-style, AI-assisted" in label:
-        return "While the feedback is balanced, the hyper-perfect grammar and uniform pacing indicate an AI likely helped draft this."
-    elif "Promotional-style, Human-written" in label:
-        return "This is clearly human-written, but the aggressive marketing language and extreme enthusiasm suggest it might be biased or incentivized."
-    elif "Promotional-style, AI-assisted" in label:
-        return "This has all the hallmarks of a bot. It relies heavily on generic buzzwords, repetitive phrasing, and an unnatural promotional tone."
-    return "Analysis unavailable."
+def _groq_narrate(text: str, label: str, confidence: float) -> str:
+    """Ask Groq to reverse-engineer the primary model's decision across all 4 quadrants."""
+    if not GROQ_API_KEY:
+        raise ValueError("No GROQ_API_KEY set.")
 
-# ---------------- PROMPT BUILDER (THE SWEET SPOT) ----------------
-
-def build_prompt(text, label, confidence):
-    # 1. System Prompt: The Sweet Spot Constraints
-    system_prompt = (
-        "You are an expert linguistic analyst. Your job is to justify why a review received a specific classification. "
-        "STRICT RULES:\n"
-        "1. Write EXACTLY 2 to 3 fluid, conversational sentences (around 50-60 words total).\n"
-        "2. Do NOT use lists, bullet points, or markdown formatting.\n"
-        "3. Justify the classification by pointing out specific words, phrasing, or structural patterns from the text.\n"
-        "4. Speak directly to the user in a natural tone (e.g., 'This reads naturally because...', 'Notice how this uses...').\n"
-        "5. Never use robotic phrasing like 'The system classified' or 'The model detected'."
+    system = (
+        "You are the Explainable AI (XAI) module for an e-commerce review fraud detector. "
+        "Your job is to explain WHY the primary AI model assigned a specific label to a review. "
+        "The model classifies reviews across a 2x2 matrix: Style (Genuine vs. Promotional) and Authorship (Human vs. AI).\n\n"
+        "Use this strict framework to reverse-engineer the decision based on the text:\n"
+        "1. Promotional-style: Look for rigid formatting, sterile/generic template praise lacking personal context, marketing buzzwords, or 'seller voice'.\n"
+        "2. Genuine-style: Look for nuanced trade-offs, specific personal context, OR pragmatic/terse buyer observations (e.g., blunt, everyday language typical of genuine regional shoppers).\n"
+        "3. AI-assisted: Look for overly polished syntax, sterile/perfect grammar, robotic transitions ('Furthermore', 'Overall'), and cliché LLM phrases ('game changer').\n"
+        "4. Human-written: Look for natural conversational pacing, slang, emotional nuance, minor typos, or highly specific niche use-cases.\n\n"
+        "Keep your explanation under 3 sentences. Be direct and analytical. Do not use generic filler.\n"
+        "Format exactly as: 'AI Logic: [Your explanation]'"
     )
-    
-    # 2. Dynamic Focus: Telling it exactly how to justify the label
-    if "Genuine-style, Human-written" in label:
-        focus = "Justify this as human by pointing out specific natural details, varied sentence pacing, or authentic emotion."
-    elif "Genuine-style, AI-assisted" in label:
-        focus = "Justify this as AI-assisted by pointing out overly perfect grammar, uniform sentence lengths, or AI-like vocabulary despite the helpful tone."
-    elif "Promotional-style, Human-written" in label:
-        focus = "Justify this as promotional by pointing out the specific aggressive marketing language, high bias, or exaggerated enthusiasm."
-    elif "Promotional-style, AI-assisted" in label:
-         focus = "Justify this as an AI bot by pointing out the specific robotic buzzwords, repetitive structure, and unnatural marketing tone."
+
+    user_prompt = f"Review Text: '{text}'\nModel Label: {label} ({confidence*100:.0f}% confidence)\nExplain why the model made this decision."
+
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        json={
+            "model":      GROQ_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens":  85,
+        },
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type":  "application/json",
+        },
+        timeout=5,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
+# ──────────────────────────────────────────────────────────────────
+# TEMPLATE FALLBACK
+# ──────────────────────────────────────────────────────────────────
+
+def _template_fallback(label: str, confidence: float) -> str:
+    """Pure-Python fallback when Groq is unavailable. Respects the full 2-part label."""
+    if confidence >= 0.88:
+        return f"AI Logic: Flagged as {label} ({confidence:.0%}) due to strong stylistic and syntactic markers typical of this category."
+    elif confidence >= 0.70:
+        return f"AI Logic: Classified as {label} ({confidence:.0%}) based on the overall formatting, tone, and pacing of the writing."
     else:
-         focus = "Briefly justify the tone and structure of the text."
+        return f"AI Logic: Classified as {label} with moderate confidence ({confidence:.0%}). Writing patterns lean this way, but signals are mixed."
 
-    # 3. Delimiter-Based User Prompt
-    user_prompt = f"""<CONTEXT>
-Classification: {label}
-Goal: {focus}
-</CONTEXT>
+# ──────────────────────────────────────────────────────────────────
+# MAIN ENTRY POINT
+# ──────────────────────────────────────────────────────────────────
 
-<REVIEW_TEXT>
-{text[:300]}
-</REVIEW_TEXT>
+def stream_explanation(text: str, label: str, confidence: float):
+    """
+    Main entry point called from app.py /explain_stream.
+    Streams the explanation word-by-word.
+    """
+    print(f"[XAI] Explaining: {label} @ {confidence:.2%}")
 
-<INSTRUCTION>
-Write your 2-3 sentence justification now.
-</INSTRUCTION>"""
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-    
-    if _llm_tokenizer and getattr(_llm_tokenizer, "chat_template", None):
-        return _llm_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    
-    return f"System: {system_prompt}\nUser: {user_prompt}\nAssistant:"
-
-# ---------------- STREAMING GENERATOR ----------------
-
-def stream_explanation(text, label, confidence):
-    """Yields text chunks as they are generated."""
-    load_local_llm()
-    if _llm_model == "FAILED" or _llm_tokenizer is None:
-        yield analyze_locally(text, label) 
-        return
-
+    explanation = ""
     try:
-        prompt = build_prompt(text, label, confidence)
-        
-        inputs = _llm_tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        
-        streamer = TextIteratorStreamer(_llm_tokenizer, skip_prompt=True, skip_special_tokens=True)
-        
-        generation_kwargs = dict(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            streamer=streamer,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=TEMPERATURE,
-            do_sample=True,
-            pad_token_id=_llm_tokenizer.pad_token_id
-        )
-
-        thread = threading.Thread(target=_llm_model.generate, kwargs=generation_kwargs)
-        thread.start()
-
-        for new_text in streamer:
-            yield new_text
-            
-        gc.collect()
-
+        explanation = _groq_narrate(text, label, confidence)
     except Exception as e:
-        yield f"Error: {str(e)}"
+        print(f"[XAI] Groq failed, using template. Error: {e}")
+        explanation = _template_fallback(label, confidence)
 
-# ---------------- STATIC GENERATOR (LEGACY SUPPORT) ----------------
+    # Ensure the frontend gets the expected prefix formatting
+    if not explanation.startswith("AI Logic:"):
+        explanation = f"AI Logic: {explanation}"
 
-@lru_cache(maxsize=100)
-def get_explanation(text, label, confidence):
-    full_text = ""
-    for chunk in stream_explanation(text, label, confidence):
-        full_text += chunk
-    return full_text
+    # Stream word-by-word
+    words = explanation.split()
+    for i, word in enumerate(words):
+        yield ("" if i == 0 else " ") + word
+        time.sleep(_WORD_DELAY)

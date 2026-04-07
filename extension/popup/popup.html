@@ -1,46 +1,59 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
+    <meta charset="utf-8">
     <title>ReviewGuard</title>
-    <link rel="stylesheet" href="popup.css">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; width: 320px; margin: 0; padding: 15px; background: #f8f9fa; color: #333; }
+        h2 { margin: 0 0 15px 0; font-size: 18px; text-align: center; color: #232f3e; }
+        
+        /* Dashboard Styles */
+        .dashboard { background: #fff; padding: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 15px; }
+        .dash-title { font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #555; text-transform: uppercase; }
+        .bar-container { width: 100%; background: #e0e0e0; border-radius: 4px; overflow: hidden; height: 10px; display: flex; margin-bottom: 5px; }
+        .bar-segment { height: 100%; transition: width 0.5s ease; }
+        .legend { display: flex; flex-wrap: wrap; gap: 5px; font-size: 10px; margin-top: 8px; }
+        .legend-item { display: flex; align-items: center; gap: 3px; width: 48%; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+        /* Manual Input Styles */
+        textarea { width: 100%; height: 80px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; resize: none; box-sizing: border-box; font-family: inherit; }
+        button { width: 100%; padding: 10px; background: #232f3e; color: #fff; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #3a4b61; }
+        
+        .hidden { display: none !important; }
+        #resultContainer { margin-top: 15px; padding: 10px; background: #fff; border-radius: 6px; border-left: 4px solid #9e9e9e; }
+        .badge { font-weight: bold; font-size: 12px; padding: 4px 8px; border-radius: 4px; display: inline-block; }
+        #explanationBox { margin-top: 10px; font-size: 12px; background: #f0f2f5; padding: 8px; border-radius: 4px; }
+    </style>
 </head>
 <body>
 
-    <header>
-        <div class="logo-area">
-            <span class="icon">🛡️</span>
-            <h1>ReviewGuard</h1>
-        </div>
-        <p class="subtitle">AI-Powered E-Commerce Truth Detector</p>
-    </header>
+    <h2>🛡️ ReviewGuard</h2>
 
-    <main>
-        <textarea id="reviewInput" placeholder="Paste an e-commerce product review here to analyze..."></textarea>
-        
-        <button id="analyzeBtn" class="primary-btn">
-            🔍 Analyze Text
-        </button>
-
-        <div id="resultContainer" class="hidden">
-            <div class="result-card">
-                <span class="label-title">VERDICT</span>
-                <div id="labelBadge" class="badge">--</div>
-                
-                <button id="explainBtn" class="secondary-btn hidden">
-                    💡 Why?
-                </button>
+    <div class="dashboard" id="dashboard">
+        <div class="dash-title">Current Page Stats <span id="totalScanned">(0 scanned)</span></div>
+        <div class="bar-container" id="statBar">
             </div>
-
-            <div id="explanationBox" class="hidden">
-                <div id="explanationText"></div>
-            </div>
+        <div class="legend">
+            <div class="legend-item"><div class="dot" style="background:#2e7d32"></div> Gen/Human <span id="l-gh">0</span></div>
+            <div class="legend-item"><div class="dot" style="background:#fbc02d"></div> Gen/AI <span id="l-ga">0</span></div>
+            <div class="legend-item"><div class="dot" style="background:#d32f2f"></div> Promo/Hum <span id="l-ph">0</span></div>
+            <div class="legend-item"><div class="dot" style="background:#b71c1c"></div> Promo/AI <span id="l-pa">0</span></div>
         </div>
-    </main>
+    </div>
 
-    <footer>
-        <span class="status-dot"></span> System Operational
-    </footer>
+    <div class="dash-title" style="margin-top: 15px;">Manual Analysis</div>
+    <textarea id="reviewInput" placeholder="Paste a review here to analyze it manually..."></textarea>
+    <button id="analyzeBtn">🔍 Analyze Text</button>
+
+    <div id="resultContainer" class="hidden">
+        <span id="labelBadge" class="badge"></span>
+        <button id="explainBtn" class="hidden">💡 Why?</button>
+        <div id="explanationBox" class="hidden">
+            <div id="explanationText"></div>
+        </div>
+    </div>
 
     <script src="popup.js"></script>
 </body>

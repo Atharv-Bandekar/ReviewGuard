@@ -23,3 +23,11 @@ nltk
 
 # Environment Variables
 python-dotenv
+
+#EDA
+matplotlib
+seaborn
+ipykernel
+
+# 
+llama-cpp-python
