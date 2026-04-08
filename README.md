@@ -1,4 +1,4 @@
-````markdown
+
 # ReviewGuard: E-Commerce Truth Detector
 
 ## Overview
