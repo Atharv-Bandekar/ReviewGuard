@@ -2,7 +2,7 @@
 # ReviewGuard: E-Commerce Truth Detector
 
 ## Overview
-ReviewGuard is a highly specialized machine learning application designed to detect and classify fraudulent product reviews wit h high accuracy. Moving beyond simple "Fake vs. Real" binaries, this system decomposes review analysis into two orthogonal dimensions: **Traditional Fraud-Style Detection** and **AI-Authorship Likelihood**. 
+ReviewGuard is a highly specialized machine learning application designed to detect and classify fraudulent product reviews with high accuracy. Moving beyond simple "Fake vs. Real" binaries, this system decomposes review analysis into two orthogonal dimensions: **Traditional Fraud-Style Detection** and **AI-Authorship Likelihood**. 
 
 Powered by a DeBERTa sequence classifier, an algorithmic Heuristics Engine, and a local Qwen Large Language Model (LLM) for Explainable AI (XAI), ReviewGuard provides both REST API endpoints and a seamless Chrome browser extension for real-time authentication on e-commerce platforms like Amazon.
 
