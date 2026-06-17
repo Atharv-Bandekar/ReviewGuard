@@ -191,6 +191,10 @@ Returns a chunked text/plain stream yielding tokens in real-time.
 - Purpose: Translates the numeric outputs of the Two-Axis system into natural language justifications for end-users based on a strict cross-referenced prompt matrix.
 - Optimization: API-driven to eliminate local memory overhead, providing ultra-low latency streaming with a built-in Python string template fallback to ensure continuous uptime.
 
+## Demo
+
+<img src="demo reviewguard.gif" width="100%" />
+
 ## Contributing
 
 Contributions to improve detection algorithms or expand platform support are welcome.
