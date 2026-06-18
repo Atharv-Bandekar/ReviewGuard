@@ -193,7 +193,7 @@ Returns a chunked text/plain stream yielding tokens in real-time.
 
 ## Demo
 
-<img src="demo reviewguard.gif" width="100%" />
+<img src="demo_reviewGuard.gif" width="100%" />
 
 ## Contributing
 
