@@ -4,7 +4,7 @@ tf-keras
 torch>=2.2.0        # <-- CRITICAL: Required for Qwen LLM in xai_service.py
 
 # NLP & Model Handling
-transformers>=4.40.0 # <-- CRITICAL: Upgraded to support Qwen2.5 architecture
+transformers==4.57.6
 sentencepiece
 protobuf
 textblob
@@ -29,5 +29,3 @@ matplotlib
 seaborn
 ipykernel
 
-# 
-llama-cpp-python

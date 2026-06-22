@@ -27,7 +27,7 @@ from backend.heuristics_engine import analyze_text_heuristics
 MAX_LEN = 128
 
 # If you haven't run temperature calibration, leave at 1.0 (no-op)
-CALIBRATION_T = 1.2537   
+CALIBRATION_T = 1.2375  
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1" # Force CPU
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # Reduce log spam
@@ -76,22 +76,31 @@ def get_combined_assessment(raw_fake_prob: float,
 
     # ── Axis 1: style (DeBERTa-owned) ──────────────────────────────
     # AGGRESSIVE THRESHOLD: Narrowed the "Uncertain" band to force a decision.
-    if fake_prob >= 0.60:
-        style      = "Promotional-style"
-        style_conf = min(fake_prob,0.98)
-    elif real_prob >= 0.60: # Trusts the human if Fake score is 0.95 or lower
-        style      = "Genuine-style"
-        style_conf = min(real_prob,0.98)
-    else:
-        # Microscopic 3% window for Uncertain (0.95 to 0.98)
-        style      = "Uncertain-style"
-        style_conf = max(fake_prob, real_prob)
+    FAKE_THRESHOLD    = 0.9000   # data-driven, shadow run      
+    GENUINE_THRESHOLD = 0.4000   # asymmetric (FP cost > FN)   
+                                                                        
+    if fake_prob >= FAKE_THRESHOLD:                                    
+         style      = "Promotional-style"                               
+         style_conf = min(fake_prob, 0.98)                              
+    elif fake_prob <= GENUINE_THRESHOLD:                               
+         style      = "Genuine-style"                                   
+         style_conf = min(1.0 - fake_prob, 0.98)                        
+    else:                                                              
+         style      = "Uncertain-style"                                 
+         style_conf = max(fake_prob, 1.0 - fake_prob)
 
     # ── Axis 2: authorship (Neutralized) ───────────────────────────
     # We agreed rule-based AI detection causes false positives for terse humans.
     # We force "Human-written" to safely bypass the AI heuristics while 
     # keeping the frontend popup.js 2-part string matching perfectly intact.
     author = "Human-written"
+
+    AI_THRESHOLD = 0.60
+
+    if ai_score >= AI_THRESHOLD:
+        author = "AI-assisted"
+    else:
+        author = "Human-written"
 
     combined_label = f"{style}, {author}"
     final_conf = round(style_conf, 4)
