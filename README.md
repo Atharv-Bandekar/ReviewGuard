@@ -1,10 +1,10 @@
-````markdown
+
 # ReviewGuard: E-Commerce Truth Detector
 
 ## Overview
-ReviewGuard is a highly specialized machine learning application designed to detect and classify fraudulent product reviews wit h high accuracy. Moving beyond simple "Fake vs. Real" binaries, this system decomposes review analysis into two orthogonal dimensions: **Traditional Fraud-Style Detection** and **AI-Authorship Likelihood**. 
+ReviewGuard is a highly specialized machine learning application designed to detect and classify fraudulent product reviews with high accuracy. Moving beyond simple "Fake vs. Real" binaries, this system decomposes review analysis into two orthogonal dimensions: **Traditional Fraud-Style Detection** and **AI-Authorship Likelihood**. 
 
-Powered by a DeBERTa sequence classifier, an algorithmic Heuristics Engine, and a local Qwen Large Language Model (LLM) for Explainable AI (XAI), ReviewGuard provides both REST API endpoints and a seamless Chrome browser extension for real-time authentication on e-commerce platforms like Amazon.
+Powered by a local DeBERTa-v3 Small sequence classifier, an algorithmic Heuristics Engine, and the Groq API (LLaMA 3.1) for lightning-fast Explainable AI (XAI), ReviewGuard provides both REST API endpoints and a seamless Chrome browser extension for real-time authentication on e-commerce platforms like Amazon.
 
 ## Core Features
 - **Two-Axis Classification**: Classifies reviews into 4 nuanced quadrants:
@@ -12,35 +12,33 @@ Powered by a DeBERTa sequence classifier, an algorithmic Heuristics Engine, and 
   - ⚠️ Genuine-style, AI-assisted
   - 🚫 Promotional-style, Human-written
   - 🚫 Promotional-style, AI-assisted
-- **Explainable AI (XAI) Streaming**: Uses a local, lightweight LLM (`Qwen2.5-0.5B-Instruct`) to generate ultra-crisp, conversational explanations of *why* a review was flagged, streamed dynamically to the UI.
-- **Algorithmic Heuristics**: Calculates AI generation probability dynamically using Lexical Complexity and Sentence Length Uniformity, eliminating the need for brittle, hardcoded dictionaries.
-- **Batch Processing API**: Efficient processing of multiple reviews simultaneously with confidence scores mathematically capped at 99%.
+- **Explainable AI (XAI) Streaming**: Uses the Groq API (`llama-3.1-8b-instant`) to generate ultra-crisp, conversational explanations of *why* a review was flagged, streamed dynamically to the UI. Includes a pure-Python templated fallback.
+- **Algorithmic Heuristics**: Calculates AI generation probability dynamically using Lexical Complexity and Sentence Length Uniformity, cross-referenced with a temperature-calibrated probability matrix.
+- **Batch Processing API**: Efficient processing of multiple reviews simultaneously with confidence scores mathematically scaled.
 - **Browser Extension**: Specialized Chrome extension that injects real-time confidence badges and XAI "Why?" buttons directly into Amazon product pages.
 
 ## Project Structure
 ```text
 ├── app.py                       # Core Flask application with dual-axis inference
-├── setup_llm.py                 # Utility script to pre-download/cache local LLM weights
-├── requirements.txt             # Python dependencies (TensorFlow, PyTorch, Transformers)
+├── requirements.txt             # Python dependencies (TensorFlow, Transformers, etc.)
+├── .env                         # Environment variables (Groq API Key)
 ├── README.md                    # Project documentation
 ├── backend/                     # Backend services and models
 │   ├── __init__.py              
-│   ├── xai_service.py           # Local LLM streaming service for Explainable AI
-│   └── model/                   # Amazon Review DeBERTa Model
+│   ├── xai_service.py           # Groq API streaming service for Explainable AI
+│   ├── heuristics_engine.py     # Rule-based authorship analysis
+│   └── model/                   # Local DeBERTa-v3 Small weights
 │       ├── config.json          
-│       ├── tf_model.h5          # Trained TensorFlow DeBERTa model weights
+│       ├── tf_model.h5          
 │       └── tokenizer_config.json 
 ├── notebooks/                   # Jupyter notebooks for research and development
-│   └── transformer.ipynb        
 └── extension/                   # Chrome browser extension
     ├── content.js               # Content script for DOM manipulation on Amazon
     ├── manifest.json            # Extension configuration manifest (Manifest V3)
     ├── icons/                   # Extension icon assets
     └── popup/                   # Extension popup interface
-        ├── popup.css            
-        ├── popup.html           
-        └── popup.js             # Manual text entry analysis logic
-````
+
+```
 
 ## Installation & Setup
 
@@ -49,6 +47,7 @@ Powered by a DeBERTa sequence classifier, an algorithmic Heuristics Engine, and 
   - Python 3.8 or higher
   - `pip` package manager
   - Git
+  - Groq API Key
 
 ### Local Backend Setup
 
@@ -78,11 +77,11 @@ Powered by a DeBERTa sequence classifier, an algorithmic Heuristics Engine, and 
     pip install -r requirements.txt
     ```
 
-4.  **Pre-Download AI Models (Run Once)**:
-    This caches the Qwen LLM weights (\~1.5GB) and tokenizers locally to ensure the API boots instantly without hanging.
+4.  **Configure Environment Variables**:
+    Create a .env file in the root directory and add your Groq API key:
 
     ```bash
-    python setup_llm.py
+    GROQ_API_KEY=your_groq_api_key_here
     ```
 
 5.  **Start the API Server**:
@@ -160,9 +159,41 @@ Returns a chunked `text/plain` stream (Server-Sent Events format compatible) yie
 
 ### 3\. Explainable AI (Qwen LLM)
 
-  - **Architecture**: `Qwen/Qwen2.5-0.5B-Instruct`
-  - **Purpose**: Translates the numeric outputs of the Two-Axis system into natural language justifications for end-users.
-  - **Optimization**: Runs locally using the Hugging Face `TextIteratorStreamer` with highly constrained prompt engineering (strict token limits, forced conversational formatting) to prevent robotic rambling and terminal spam.
+Generates a direct, analytical justification for the model's prediction.
+
+```
+POST /explain_stream
+Content-Type: application/json
+
+{
+  "text": "The URL encoded review text...",
+  "label": "Genuine-style, Human-written",
+  "confidence": 0.95
+}
+
+```
+
+Response:
+Returns a chunked text/plain stream yielding tokens in real-time.
+
+## System Architecture Details
+1. **Fraud-Style Axis (DeBERTa)**
+- Architecture: DeBERTa-v3 Small (TFDebertaV2ForSequenceClassification)
+- Purpose: Detects traditional incentivized, biased, or highly promotional language patterns.
+- Optimization: Forced CPU-based inference (CUDA_VISIBLE_DEVICES="-1") for broader deployment compatibility with temperature-calibrated softmax outputs.
+
+2. **Authorship Axis (Heuristics Engine)**
+- Architecture: Dynamic Linguistic Algorithm (O(N) time complexity).
+- Purpose: Calculates the mathematical likelihood of AI assistance by analyzing Lexical Complexity (polysyllabic density / Type-Token Ratio) and Sentence Length Uniformity (variance analysis).
+
+3. **Explainable AI (Groq API)**
+- Architecture: llama-3.1-8b-instant via Groq
+- Purpose: Translates the numeric outputs of the Two-Axis system into natural language justifications for end-users based on a strict cross-referenced prompt matrix.
+- Optimization: API-driven to eliminate local memory overhead, providing ultra-low latency streaming with a built-in Python string template fallback to ensure continuous uptime.
+
+## Demo
+
+<img src="demo_reviewGuard.gif" width="80%" />
 
 ## Contributing
 
